@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Hệ thống quản lý phòng học</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="container">
+    <h1>Hệ thống quản lý phòng học</h1>
+
+    <div class="filters">
+        <div>
+            <label>Tòa nhà:</label><br>
+            <select id="building">
+                <option value="All" selected>Tất cả</option>
+                <option value="A">Tòa A</option>
+                <option value="B">Tòa B</option>
+                <option value="C">Tòa C</option>
+            </select>
+        </div>
+        <div>
+            <label>Ngày:</label><br>
+            <input type="date" id="date"/>
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr id="tableHeader">
+                <th>Phòng</th>
+                <th>Sức chứa</th>
+            </tr>
+        </thead>
+        <tbody id="roomTable"></tbody>
+    </table>
+</div>
+
+<!-- Popup ĐẶT phòng -->
+<div id="popupOverlay" class="popup-overlay" style="display:none;">
+    <div class="popup">
+        <h2>Xác nhận đặt phòng</h2>
+        <div class="popup-content">
+            <div>Phòng: <b id="popupRoom"></b></div>
+            <div>Ngày: <b id="popupDate"></b></div>
+            <div>Bắt đầu: <b id="popupStart"></b></div>
+            <div>Kết thúc: <b id="popupEnd"></b></div>
+            <div>
+                <label>Mục đích (bắt buộc):</label>
+                <textarea id="popupPurpose" rows="3"></textarea>
+            </div>
+        </div>
+        <div class="popup-buttons">
+            <button onclick="closePopup()">Đóng</button>
+            <button onclick="confirmBooking()">Xác nhận</button>
+        </div>
+    </div>
+</div>
+
+<!-- Popup HỦY phòng -->
+<div id="cancelBookingPopup" class="popup-overlay" style="display:none;">
+    <div class="popup">
+        <h2>Hủy đặt phòng</h2>
+        <div>
+            <b>Phòng:</b> <span id="cancelRoom"></span><br>
+            <b>Ngày:</b> <span id="cancelDate"></span><br>
+            <b>Thời gian:</b> <span id="cancelTime"></span><br>
+            <b>Mục đích:</b> <span id="cancelPurpose"></span><br>
+        </div>
+        <div class="popup-buttons">
+            <button onclick="confirmCancelBooking()">Xóa</button>
+            <button onclick="closeCancelPopup()">Đóng</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const rooms = [
+    { name: "A101", capacity: 40, building: "A" },
+    { name: "A102", capacity: 40, building: "A" },
+    { name: "A103", capacity: 40, building: "A" },
+    { name: "A201", capacity: 40, building: "A" },
+    { name: "A202", capacity: 40, building: "A" },
+    { name: "A203", capacity: 50, building: "A" },
+    { name: "A301", capacity: 70, building: "A" },
+    { name: "A302", capacity: 90, building: "A" },
+    { name: "A303", capacity: 60, building: "A" },
+    { name: "A401", capacity: 60, building: "A" },
+    { name: "A609", capacity: 69, building: "A" },
+    { name: "B101", capacity: 40, building: "B" },
+    { name: "B102", capacity: 40, building: "B" },
+    { name: "B103", capacity: 40, building: "B" },
+    { name: "B201", capacity: 40, building: "B" },
+    { name: "B202", capacity: 50, building: "B" },
+    { name: "B203", capacity: 50, building: "B" },
+    { name: "B301", capacity: 50, building: "B" },
+    { name: "B302", capacity: 50, building: "B" },
+    { name: "B303", capacity: 60, building: "B" },
+    { name: "B401", capacity: 70, building: "B" },
+    { name: "C101", capacity: 80, building: "C" },
+    { name: "C102", capacity: 80, building: "C" },
+    { name: "C103", capacity: 80, building: "C" },
+    { name: "C201", capacity: 80, building: "C" },
+    { name: "C202", capacity: 80, building: "C" },
+    { name: "C203", capacity: 80, building: "C" },
+    { name: "C301", capacity: 80, building: "C" },
+    { name: "C302", capacity: 80, building: "C" },
+    { name: "C303", capacity: 80, building: "C" },
+    { name: "C401", capacity: 100, building: "C" },
+];
+
+let timeSlots = [];
+for (let h = 7; h < 21; h++) {
+    timeSlots.push(`${String(h).padStart(2,"0")}:00`);
+    timeSlots.push(`${String(h).padStart(2,"0")}:30`);
+}
+
+let selectedRoom = null, selectedDate = null;
+let selectedStartTime = null, selectedEndTime = null;
+let selectedBookingId = null;
+
+let dragging = false;
+let dragStart = null;
+
+let isCancelling = false;
+
+// --- TẠO HEADER THỜI GIAN ---
+function createTimelineColumns() {
+    const header = document.getElementById("tableHeader");
+    header.querySelectorAll("th:not(:first-child):not(:nth-child(2))").forEach(e => e.remove());
+    timeSlots.forEach(time => {
+        const th = document.createElement("th");
+        th.textContent = time;
+        header.appendChild(th);
+    });
+}
+
+// --- HIỂN THỊ PHÒNG ---
+function loadRooms() {
+    const tbody = document.getElementById("roomTable");
+    tbody.innerHTML = "";
+    const building = document.getElementById("building").value;
+
+    rooms
+        .filter(r => building === "All" || r.building === building)
+        .forEach(room => {
+        const tr = document.createElement("tr");
+        tr.dataset.room = room.name;
+        tr.innerHTML = `<td>${room.name}</td><td>${room.capacity}</td>`;
+
+        timeSlots.forEach((time, index) => {
+            const td = document.createElement("td");
+            td.classList.add("time-slot");
+            td.dataset.time = time;
+            td.dataset.index = index;
+            tr.appendChild(td);
+        });
+
+        tbody.appendChild(tr);
+    });
+
+    addDragEvents();
+}
+
+// --- LOAD BOOKING (TÔ XANH) ---
+async function loadBookings() {
+    const dateInput = document.getElementById("date").value;
+    if (!dateInput) return;
+
+    try {
+        const res = await fetch(`/api/bookings?date=${dateInput}`);
+        if (!res.ok) return;
+        const bookings = await res.json();
+
+        document.querySelectorAll(".time-slot").forEach(c => {
+            c.style.backgroundColor = "";
+            c.style.color = "";
+            c.textContent = "";
+            c.removeAttribute("colspan");
+            c.style.display = "";
+        });
+
+        bookings.forEach(b => {
+            const row = document.querySelector(`tr[data-room="${b.room_name}"]`);
+            if (!row) return;
+
+            let startIndex = timeSlots.indexOf(b.start_time);
+            let endIndex = timeSlots.indexOf(b.end_time);
+            if (startIndex === -1 || endIndex === -1) return;
+
+            let colspan = endIndex - startIndex;
+            const startCell = row.querySelector(`td[data-index="${startIndex}"]`);
+            if (startCell) {
+                startCell.style.backgroundColor = "#8FBC8F";
+                startCell.style.color = "white";
+                startCell.textContent = b.purpose;
+
+                // Gán dữ liệu
+                startCell.dataset.id = b.id;
+                startCell.dataset.room = b.room_name;
+                startCell.dataset.start = b.start_time;
+                startCell.dataset.end = b.end_time;
+                startCell.dataset.date = dateInput;
+                startCell.dataset.purpose = b.purpose;
+
+                // -- GÁN CLICK CHO Ô ĐÃ ĐẶT (MỞ POPUP HỦY) --
+                startCell.onclick = () => openCancelPopup(startCell);
+
+                startCell.colSpan = colspan + 1;
+                startCell.classList.add("booked");
+
+                // Nếu click vào ô đã đặt -> chuyển sang chế độ hủy
+                startCell.addEventListener("click", (e) => {
+                    isCancelling = true;
+                });
+            }
+
+            for (let i = startIndex + 1; i <= endIndex; i++) {
+                const cell = row.querySelector(`td[data-index="${i}"]`);
+                if (cell) cell.style.display = "none";
+            }
+        });
+
+    } catch {
+        console.error("Không tải được lịch đặt phòng");
+    }
+}
+
+// Khi click vào ô đã đặt -> hiển thị popup hủy
+document.addEventListener("click", (e) => {
+    if (!isCancelling) return; // chỉ cho click vào khi đang hủy
+
+    const cell = e.target.closest(".booked");
+    if (!cell || !cell.dataset.id) return;  // đảm bảo có id
+
+    // Lưu ID vào biến toàn cục
+    selectedBookingId = cell.dataset.id;
+
+    console.log(">>> ID đặt phòng khi click:", selectedBookingId); // kiểm tra
+
+    // Gán thông tin popup
+    selectedRoom = cell.dataset.room;
+    selectedDate = cell.dataset.date;
+    selectedStartTime = cell.dataset.start;
+    selectedEndTime = cell.dataset.end;
+    selectedPurpose = cell.dataset.purpose;
+
+    document.getElementById("cancelRoom").textContent = selectedRoom;
+    document.getElementById("cancelDate").textContent = selectedDate;
+    document.getElementById("cancelTime").textContent = `${selectedStartTime} - ${selectedEndTime}`;
+    document.getElementById("cancelPurpose").textContent = selectedPurpose;
+
+    // Mở popup hủy phòng
+    document.getElementById("cancelBookingPopup").style.display = "flex";
+});
+
+
+function addDragEvents() {
+    if (!document.getElementById("date").value) return;
+
+    document.querySelectorAll(".time-slot").forEach(cell => {
+        // Bắt đầu kéo
+        cell.addEventListener("mousedown", e => {
+            isCancelling = false; // chuyển sang chế độ đặt
+            if (cell.classList.contains("booked")) return; // Không cho kéo vào ô đã đặt
+            dragging = true;
+            dragStart = cell;
+            cell.classList.add("dragging");
+        });
+
+        // Kéo qua các ô khác
+        cell.addEventListener("mouseenter", e => {
+            if (dragging && dragStart.parentElement === cell.parentElement) {
+                cell.classList.add("dragging");
+            }
+        });
+
+        // Kết thúc kéo
+        cell.addEventListener("mouseup", e => {
+            if (dragging) {
+                dragging = false;
+
+                const startIndex = parseInt(dragStart.dataset.index);
+                const endIndex = parseInt(cell.dataset.index);
+                const row = dragStart.parentElement;
+
+                const from = Math.min(startIndex, endIndex);
+                const to = Math.max(startIndex, endIndex);
+
+                // Kiểm tra có trùng giờ đã đặt không
+                for (let i = from; i <= to; i++) {
+                    const slot = row.querySelector(`td[data-index="${i}"]`);
+                    if (slot && slot.classList.contains("booked")) {
+                        alert("Khung giờ này đã có người đặt trước!");
+                        document.querySelectorAll(".dragging").forEach(c => c.classList.remove("dragging"));
+                        return;
+                    }
+                }
+
+                showPopup(dragStart, cell); // Nếu hợp lệ → mở popup đặt phòng
+                document.querySelectorAll(".dragging").forEach(c => c.classList.remove("dragging"));
+            }
+        });
+    });
+
+    document.addEventListener("mouseup", () => {
+        dragging = false;
+        document.querySelectorAll(".dragging").forEach(c => c.classList.remove("dragging"));
+    });
+}
+
+// --- POPUP ĐẶT PHÒNG ---
+function showPopup(startCell, endCell) {
+    const dateInput = document.getElementById("date").value;
+    if (!dateInput) return alert("Vui lòng chọn ngày!");
+
+    selectedRoom = startCell.parentElement.dataset.room;
+    selectedDate = dateInput;
+
+    let startIndex = parseInt(startCell.dataset.index);
+    let endIndex = parseInt(endCell.dataset.index);
+    selectedStartTime = timeSlots[Math.min(startIndex, endIndex)];
+    selectedEndTime = timeSlots[Math.max(startIndex, endIndex) + 1] || timeSlots[Math.max(startIndex, endIndex)];
+
+    document.getElementById("popupRoom").textContent = selectedRoom;
+    document.getElementById("popupDate").textContent = selectedDate;
+    document.getElementById("popupStart").textContent = selectedStartTime;
+    document.getElementById("popupEnd").textContent = selectedEndTime;
+
+    document.getElementById("popupOverlay").style.display = "flex";
+}
+
+function closePopup() {
+    document.getElementById("popupOverlay").style.display = "none";
+}
+
+// --- CONFIRM ĐẶT PHÒNG ---
+async function confirmBooking() {
+    const input = document.getElementById("popupPurpose");
+    const purpose = input.value.trim();
+    if (!purpose) return alert("Vui lòng nhập mục đích!");
+
+    try {
+        const res = await fetch("/api/bookings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                room_name: selectedRoom,
+                date: selectedDate,
+                start_time: selectedStartTime,
+                end_time: selectedEndTime,
+                purpose: purpose
+            })
+        });
+
+        if (!res.ok) return alert("Lỗi: " + (await res.json()).detail);
+
+        alert("Đặt phòng thành công!");
+
+        closePopup();
+        input.value = ""; // RESET mục đích
+        isCancelling = false; // quay về chế độ đặt
+
+        loadRooms();   // <--- Gọi cái này TRƯỚC
+        loadBookings(); // Sau
+    } catch {
+        alert("Không kết nối được server.");
+    }
+}
+
+// --- POPUP HỦY PHÒNG ---
+function openCancelPopup(cell) {
+    selectedBookingId = cell.dataset.id;
+    document.getElementById("cancelRoom").textContent = cell.dataset.room;
+    document.getElementById("cancelDate").textContent = cell.dataset.date;
+    document.getElementById("cancelTime").textContent = `${cell.dataset.start} - ${cell.dataset.end}`;
+    document.getElementById("cancelPurpose").textContent = cell.dataset.purpose;
+    document.getElementById("cancelBookingPopup").style.display = "flex";
+}
+
+function closeCancelPopup() {
+    document.getElementById("cancelBookingPopup").style.display = "none";
+}
+
+async function confirmCancelBooking() {
+    if (!confirm("Bạn có chắc muốn hủy đặt phòng này?")) return;
+
+    const res = await fetch(`/api/bookings/${selectedBookingId}`, { method: "DELETE" });
+
+    if (res.ok) {
+        alert("Đã xóa đặt phòng!");
+        closeCancelPopup();
+        isCancelling = false;  // quan trọng
+
+        loadRooms();    // CHẠY TRƯỚC
+        loadBookings(); // rồi đến
+    } else {
+        alert("Lỗi khi hủy đặt phòng");
+    }
+}
+
+// --- EVENT KHỞI TẠO ---
+window.onload = () => {
+    const today = new Date().toISOString().split("T")[0];
+    document.getElementById("date").value = today;
+
+    createTimelineColumns();
+    loadRooms();
+    loadBookings();
+};
+document.getElementById("building").addEventListener("change", () => { createTimelineColumns(); loadRooms(); loadBookings(); });
+document.getElementById("date").addEventListener("change", () => { loadRooms(); loadBookings(); });
+// Reset trạng thái mỗi khi đổi ngày
+document.getElementById("date").addEventListener("change", () => {
+    isCancelling = false;
+});
+
+// Hoặc khi đổi tòa nhà
+document.getElementById("building").addEventListener("change", () => {
+    isCancelling = false;
+});
+
+</script>
+
+<div id="tooltip" class="tooltip-box" style="display:none; position:absolute;"></div>
+
+<style>
+.booked:hover {
+    cursor: pointer; /* Gợi ý người dùng có thể bấm */
+}
+</style>
+
+</body>
+</html>
