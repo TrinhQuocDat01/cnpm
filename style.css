@@ -106,3 +106,14 @@ th, td {
     cursor: pointer;
     opacity: 0.9;
 }
+
+/* tránh inner element chặn pointer */
+.time-slot { 
+    position: relative; 
+    user-select: none; 
+}
+
+/* .time-slot * { 
+    pointer-events: none; 
+}  */
+/* nếu có nội dung con */
