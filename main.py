@@ -11,6 +11,19 @@ from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 
+# bảo mật / authentication helpers
+from passlib.context import CryptContext
+from itsdangerous import URLSafeSerializer, BadSignature
+from fastapi import Form, status
+from fastapi.responses import RedirectResponse
+
+from typing import Optional
+
+SECRET_KEY = "thay_bang_chuoi_bi_mat_cua_ban"  # đổi sang secret thực tế (env)
+SESSION_COOKIE = "r_session"
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+serializer = URLSafeSerializer(SECRET_KEY, salt="session-salt")
+
 # =========================
 #  Cấu hình DB SQLite
 # =========================
@@ -33,6 +46,12 @@ class Booking(Base):
     end_time = Column(String)
     purpose = Column(String)
 
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True)
+    hashed_password = Column(String)
+    is_active = Column(Integer, default=1)
 
 Base.metadata.create_all(bind=engine)
 
@@ -43,6 +62,22 @@ class BookingCreate(BaseModel):
     end_time: str
     purpose: str
 
+# ----- password & session helpers -----
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return pwd_context.verify(plain, hashed)
+
+def create_session_cookie(username: str) -> str:
+    return serializer.dumps({"username": username})
+
+def load_session_cookie(cookie_value: str):
+    try:
+        data = serializer.loads(cookie_value)
+        return data
+    except BadSignature:
+        return None
 
 def get_db():
     db = SessionLocal()
@@ -51,8 +86,22 @@ def get_db():
     finally:
         db.close()
 
-
 app = FastAPI()
+
+def get_current_user(request: Request, db: Session = Depends(get_db)) -> Optional[User]:
+    cookie = request.cookies.get(SESSION_COOKIE)
+    if not cookie:
+        return None
+    data = load_session_cookie(cookie)
+    if not data or "username" not in data:
+        return None
+    user = db.query(User).filter(User.username == data["username"]).first()
+    return user
+
+def require_user(user: User = Depends(get_current_user)):
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return user
 
 # CORS (dự phòng nếu chạy frontend ở port khác)
 app.add_middleware(
@@ -66,11 +115,12 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-
 @app.get("/", response_class=HTMLResponse)
-def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
-
+def home(request: Request, user: User = Depends(require_user)):
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request, "current_user": user}
+    )
 
 @app.post("/api/bookings")
 def create_booking(booking: BookingCreate, db: Session = Depends(get_db)):
@@ -142,3 +192,25 @@ def delete_booking(booking_id: int, db: Session = Depends(get_db)):
     db.delete(booking)
     db.commit()
     return {"message": "Đã xóa đặt phòng"}
+
+# --- Login form ---
+@app.get("/login", response_class=HTMLResponse)
+def login_form(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
+
+@app.post("/login")
+def login_action(request: Request, username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == username).first()
+    if not user or not verify_password(password, user.hashed_password) or not user.is_active:
+        return templates.TemplateResponse("login.html", {"request": request, "error": "Tên đăng nhập hoặc mật khẩu không đúng."})
+
+    cookie_val = create_session_cookie(user.username)
+    response = RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
+    response.set_cookie(SESSION_COOKIE, cookie_val, httponly=True, samesite="lax")
+    return response
+
+@app.get("/logout")
+def logout():
+    response = RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+    response.delete_cookie(SESSION_COOKIE)
+    return response
