@@ -3,12 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <title>Hệ thống quản lý phòng học</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=1.2">
 </head>
 <body>
 
 <div class="container">
-    <h1>Hệ thống quản lý phòng học</h1>
+    {% if current_user %}
+    <div style="float:right; margin-bottom: 10px;">
+        <div class="user-panel">
+            Xin chào, <strong>{{ current_user.username }}</strong>
+
+            <form action="/logout" method="get" style="display:inline;">
+                <button type="submit" class="logout-btn">Đăng xuất</button>
+            </form>
+        </div>
+    </div>
+    {% else %}
+    <div style="float:right; margin-bottom: 10px;">
+        <a href="/login">Đăng nhập</a>
+    </div>
+    {% endif %}
+
+    <h1 class="page-title">Hệ thống quản lý phòng học</h1>
 
     <div class="filters">
         <div>
